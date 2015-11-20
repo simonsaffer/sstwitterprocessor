@@ -1,4 +1,4 @@
-package com.sstwitterprocessor.kafka
+package com.sstwitterprocessor.events
 
 import java.util.Properties
 

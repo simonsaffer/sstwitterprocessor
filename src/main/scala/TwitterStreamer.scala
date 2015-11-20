@@ -13,8 +13,10 @@ import akka.http.scaladsl.model._
 import akka.stream.ActorMaterializer
 import com.hunorkovacs.koauth.domain.KoauthRequest
 import com.hunorkovacs.koauth.service.consumer.DefaultConsumerService
-import com.sstwitterprocessor.kafka.TwitterKafkaProducer
+import com.sstwitterprocessor.config.ApplicationConfig
+import com.sstwitterprocessor.events.TwitterKafkaProducer
 import com.sstwitterprocessor.model.Tweet
+import com.sstwitterprocessor.processing.TwitterProcessor
 import com.typesafe.config.ConfigFactory
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -26,13 +28,10 @@ object TwitterStreamer extends App {
 
 	val conf = ConfigFactory.load()
 
-	private val activatorProps = new Properties()
-  activatorProps.load(new FileInputStream("credentials.properties"))
-
-	private val consumerKey = activatorProps.getProperty("consumerKey")
-	private val consumerSecret = activatorProps.getProperty("consumerSecret")
-	private val accessToken = activatorProps.getProperty("accessToken")
-	private val accessTokenSecret = activatorProps.getProperty("accessTokenSecret")
+	private val consumerKey = ApplicationConfig.Credentials.consumerKey
+	private val consumerSecret = ApplicationConfig.Credentials.consumerSecret
+	private val accessToken = ApplicationConfig.Credentials.accessToken
+	private val accessTokenSecret = ApplicationConfig.Credentials.accessTokenSecret
 	private val url = "https://stream.twitter.com/1.1/statuses/filter.json"
 
 	implicit val system = ActorSystem()
@@ -44,6 +43,20 @@ object TwitterStreamer extends App {
 	val keyWord = "london"
 
 	val kafkaProducer = new TwitterKafkaProducer(keyWord)
+
+	val processor = new TwitterProcessor
+
+	val searchFuture = Future {
+		processor.processMessages()
+		Thread sleep 5000
+	}
+
+	searchFuture.onComplete {
+		case Success(_) => {
+			processor.start()
+		}
+		case Failure(_) => println("FAIL")
+	}
 
 	//Filter tweets by a term "london"
 	val body = "track=" + keyWord
@@ -84,7 +97,9 @@ object TwitterStreamer extends App {
 			val request = Http().singleRequest(httpRequest)
 			request.flatMap { response =>
 				if (response.status.intValue() != 200) {
+					println("#####€€€€€€&&&&&")
 					println(response.entity.dataBytes.runForeach(_.utf8String))
+					println("#####€€€€€€&&&&&")
 					Future(Unit)
 				} else {
 					response.entity.dataBytes
@@ -92,13 +107,9 @@ object TwitterStreamer extends App {
 						.filter(_.contains("\r\n"))
 						.map(json => Try(parse(json).extract[Tweet]))
 						.runForeach {
-							case Success(tweet) =>
-								kafkaProducer.send(tweet.text)
-								println("-----")
-								println(tweet.text)
-							case Failure(e) =>
-								println("-----")
-								println(e.getStackTrace)
+							case Success(tweet) => {
+                kafkaProducer.send(tweet.text)
+              }
 						}
 				}
 			}
